@@ -240,13 +240,8 @@ def process_data(file_buffer, is_demo=False):
     df_all["prediksi point"] = pd.to_numeric(df_all.get("prediksi point", 0), errors="coerce").fillna(0)
     df_all["point apps"] = pd.to_numeric(df_all.get("point apps", 0), errors="coerce").fillna(0)
     
-    # Calculate Selisih if absent or invalid
-    if "selisih" not in df_all.columns or df_all["selisih"].isnull().all():
-        df_all["selisih"] = (df_all["prediksi point"] - df_all["point apps"]).abs()
-    else:
-        df_all["selisih"] = pd.to_numeric(df_all["selisih"], errors="coerce").fillna(
-            (df_all["prediksi point"] - df_all["point apps"]).abs()
-        )
+    # Always force selisih to be absolute positive integer gap
+    df_all["selisih"] = (df_all["prediksi point"] - df_all["point apps"]).abs().astype(int)
 
     # Core Status Logic
     df_all["Status"] = df_all.apply(
@@ -258,7 +253,7 @@ def process_data(file_buffer, is_demo=False):
     def classify_severity(row):
         if row["Status"] == "Sesuai":
             return "🟢 Sesuai"
-        diff = row["selisih"]
+        diff = abs(row["selisih"])
         if diff <= 2:
             return "🟡 Low Variance (1-2 pts)"
         elif diff <= 5:
@@ -401,12 +396,10 @@ if search_query:
 # ============================================================
 # MAIN DASHBOARD TABS
 # ============================================================
-tab_overview, tab_rootcause, tab_course, tab_scatter, tab_diagnostics, tab_details, tab_action = st.tabs([
+tab_overview, tab_rootcause, tab_course, tab_details, tab_action = st.tabs([
     "📊 Overview",
     "🌳 Treemap",
     "📚 Courses",
-    "📈 Scatter",
-    "👤 Diagnostics",
     "📋 Details",
     "💬 WA Report"
 ])
@@ -580,17 +573,9 @@ with tab_rootcause:
     if not df_belum.empty:
         df_belum["Gap Sizing"] = df_belum["selisih"].apply(lambda v: max(1, v))
         
-        # Build detailed label string with session info
+        # Clean, concise label for inside the treemap tiles
         def make_leaf_label(r):
-            lbl = f"<b>{r['NAMA FRESHMEN']}</b><br>💥 Selisih: -{r['selisih']} pt ({r['prediksi point']} ➔ {r['point apps']})"
-            notes = []
-            if r['Sesi yang 0'] != "-":
-                notes.append(f"Nilai 0: {r['Sesi yang 0']}")
-            if r['Sesi yang Kosong'] != "-":
-                notes.append(f"Kosong: {r['Sesi yang Kosong']}")
-            if notes:
-                lbl += f"<br>📚 " + " | ".join(notes)
-            return lbl
+            return f"{r['NAMA FRESHMEN']} (-{r['selisih']} pt)"
 
         df_belum["Leaf Label"] = df_belum.apply(make_leaf_label, axis=1)
 
@@ -604,31 +589,31 @@ with tab_rootcause:
                     "🟡 Low Variance (1-2 pts)": "#eab308",
                     "🟠 Medium Variance (3-5 pts)": "#f97316",
                     "🔴 High Priority Audit (>5 pts)": "#ef4444"
-                },
-                custom_data=["NAMA FRESHMEN", "prediksi point", "point apps", "selisih", "NIM FRESHMEN", "Sesi yang 0", "Sesi yang Kosong"]
+                }
             )
             fig_hierarchy.update_traces(
-                hovertemplate="<b>%{customdata[0]}</b> (NIM: %{customdata[4]})<br>Prediksi: %{customdata[1]} pt<br>Apps: %{customdata[2]} pt<br><b>Selisih: -%{customdata[3]} pt</b><br>Sesi 0: %{customdata[5]}<br>Sesi Kosong: %{customdata[6]}<extra></extra>"
+                textfont=dict(size=14),
+                hovertemplate="<b>%{label}</b><br>Total Selisih Gap: %{value} pt<extra></extra>"
             )
-            fig_hierarchy.update_layout(margin=dict(t=30, l=10, r=10, b=10), height=620)
+            fig_hierarchy.update_layout(margin=dict(t=30, l=10, r=10, b=10), height=650)
             st.plotly_chart(fig_hierarchy, use_container_width=True)
         else:
             fig_hierarchy = px.sunburst(
                 df_belum,
-                path=["PIC", "Kelas", "NAMA FRESHMEN LEADER", "NAMA FRESHMEN"],
+                path=["PIC", "Kelas", "NAMA FRESHMEN LEADER", "Leaf Label"],
                 values="Gap Sizing",
                 color="Severity Level",
                 color_discrete_map={
                     "🟡 Low Variance (1-2 pts)": "#eab308",
                     "🟠 Medium Variance (3-5 pts)": "#f97316",
                     "🔴 High Priority Audit (>5 pts)": "#ef4444"
-                },
-                custom_data=["prediksi point", "point apps", "selisih"]
+                }
             )
             fig_hierarchy.update_traces(
-                hovertemplate="<b>%{label}</b><br>Prediksi: %{customdata[0]}<br>Apps: %{customdata[1]}<br>Selisih: %{customdata[2]} pt<extra></extra>"
+                textfont=dict(size=13),
+                hovertemplate="<b>%{label}</b><br>Total Selisih Gap: %{value} pt<extra></extra>"
             )
-            fig_hierarchy.update_layout(margin=dict(t=30, l=10, r=10, b=10), height=620)
+            fig_hierarchy.update_layout(margin=dict(t=30, l=10, r=10, b=10), height=650)
             st.plotly_chart(fig_hierarchy, use_container_width=True)
         
         with st.expander("🔎 Lihat Daftar Detail Freshman & Point Gap Per FL", expanded=True):
@@ -717,134 +702,6 @@ with tab_course:
     else:
         st.success("🎉 Tidak ada kendala sesi (Sesi 0 atau Sesi Kosong) ditemukan pada filter saat ini!")
 
-
-# ------------------------------------------------------------
-# TAB 4: COMPLIANCE SCATTER & MATRIX ANALYTICS
-# ------------------------------------------------------------
-with tab_scatter:
-    st.subheader("📈 Compliance Scatter Analytics (Garis Diagonal y = x)")
-    st.caption("Diagram sebar Data Science untuk mengevaluasi posisi kesesuaian point. Titik di bawah garis diagonal mewakili freshman dengan selisih point terutang.")
-
-    if not df_filtered.empty:
-        # Ensure size values are non-negative for Plotly
-        df_scatter = df_filtered.copy()
-        df_scatter["selisih_size"] = df_scatter["selisih"].abs().clip(lower=0).replace(0, 1)
-
-        fig_scatter = px.scatter(
-            df_scatter,
-            x="prediksi point",
-            y="point apps",
-            color="Severity Level",
-            size="selisih_size",
-            size_max=22,
-            hover_name="NAMA FRESHMEN",
-            hover_data=["NIM FRESHMEN", "Kelas", "NAMA FRESHMEN LEADER", "PIC", "selisih"],
-            color_discrete_map={
-                "🟢 Sesuai": "#22c55e",
-                "🟡 Low Variance (1-2 pts)": "#eab308",
-                "🟠 Medium Variance (3-5 pts)": "#f97316",
-                "🔴 High Priority Audit (>5 pts)": "#ef4444"
-            },
-            title="Point Prediksi vs Point Apps (Titik di bawah garis = Terutang Point)"
-        )
-
-        max_val = max(int(df_filtered["prediksi point"].max()), int(df_filtered["point apps"].max()), 50)
-        fig_scatter.add_shape(
-            type="line",
-            x0=0, y0=0, x1=max_val, y1=max_val,
-            line=dict(color="#38bdf8", width=2, dash="dash")
-        )
-        fig_scatter.add_annotation(
-            x=max_val * 0.75, y=max_val * 0.75,
-            text="Garis Kepatuhan Sempurna (y = x)",
-            showarrow=False,
-            font=dict(color="#38bdf8", size=13)
-        )
-        fig_scatter.update_layout(height=520, margin=dict(t=40, b=20, l=20, r=20))
-        st.plotly_chart(fig_scatter, use_container_width=True)
-
-        st.divider()
-
-        matrix_col1, matrix_col2 = st.columns(2)
-
-        with matrix_col1:
-            st.subheader("🔥 Matrix Severity Concentration Per PIC")
-            heatmap_data = pd.crosstab(df_filtered["PIC"], df_filtered["Severity Level"])
-            fig_heat = px.imshow(
-                heatmap_data,
-                labels=dict(x="Severity Level", y="PIC", color="Jumlah Freshmen"),
-                color_continuous_scale="Reds",
-                text_auto=True,
-                aspect="auto",
-                title="Matrix Konsentrasi Discrepancy"
-            )
-            fig_heat.update_layout(height=420)
-            st.plotly_chart(fig_heat, use_container_width=True)
-
-        with matrix_col2:
-            st.subheader("📊 Distirbusi Statistik Selisih Point")
-            df_non_zero = df_filtered[df_filtered["selisih"] > 0]
-            if not df_non_zero.empty:
-                fig_box = px.box(
-                    df_non_zero,
-                    x="Kelas",
-                    y="selisih",
-                    color="Kelas",
-                    points="all",
-                    title="Sebaran Outlier Selisih Point Per Kelas"
-                )
-                fig_box.update_layout(height=420, showlegend=False, xaxis_tickangle=-45)
-                st.plotly_chart(fig_box, use_container_width=True)
-            else:
-                st.info("Semua selisih point = 0")
-
-
-# ------------------------------------------------------------
-# TAB 5: PIC & FL DIAGNOSTICS
-# ------------------------------------------------------------
-with tab_diagnostics:
-    diag_col1, diag_col2 = st.columns([1, 1])
-
-    with diag_col1:
-        st.subheader("👤 Performance & Workload Per PIC")
-        pic_summary = (
-            df_filtered.groupby("PIC")
-            .agg(
-                Jumlah_Kelas=("Kelas", "nunique"),
-                Total_Freshman=("Status", "count"),
-                Jumlah_Sesuai=("Status", lambda s: (s == "Sesuai").sum()),
-                Jumlah_Belum_Sesuai=("Status", lambda s: (s == "Belum Sesuai").sum()),
-            )
-            .reset_index()
-        )
-        pic_summary["Compliance %"] = (pic_summary["Jumlah_Sesuai"] / pic_summary["Total_Freshman"] * 100).round(1)
-        pic_summary = pic_summary.sort_values("Jumlah_Belum_Sesuai", ascending=False)
-        
-        st.dataframe(
-            pic_summary.style.format({"Compliance %": "{:.1f}%"}).background_gradient(subset=["Jumlah_Belum_Sesuai"], cmap="Reds"),
-            use_container_width=True,
-            hide_index=True
-        )
-
-    with diag_col2:
-        st.subheader("🏆 Leaderboard FL (Berdasarkan Jumlah Belum Sesuai)")
-        fl_summary = (
-            df_filtered.groupby(["Kelas", "NAMA FRESHMEN LEADER", "PIC"])
-            .agg(
-                Total_FM=("Status", "count"),
-                Belum_Sesuai=("Status", lambda s: (s == "Belum Sesuai").sum()),
-                High_Risk=("Severity Level", lambda s: (s == "🔴 High Priority Audit (>5 pts)").sum())
-            )
-            .reset_index()
-        )
-        fl_summary["Discrepancy %"] = (fl_summary["Belum_Sesuai"] / fl_summary["Total_FM"] * 100).round(1)
-        fl_summary = fl_summary.sort_values("Belum_Sesuai", ascending=False)
-
-        st.dataframe(
-            fl_summary.style.format({"Discrepancy %": "{:.1f}%"}).background_gradient(subset=["Belum_Sesuai"], cmap="YlOrRd"),
-            use_container_width=True,
-            hide_index=True
-        )
 
 
 # ------------------------------------------------------------
