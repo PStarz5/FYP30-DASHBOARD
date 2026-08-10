@@ -184,24 +184,32 @@ def generate_sample_dataset():
                 "selisih": abs(prediksi - apps),
                 "Sesi yang 0": sesi_0,
                 "Sesi yang Kosong": sesi_kosong
+            })
+            
+    return pd.DataFrame(rows)
+
+# ============================================================
 # DATA LOADING & FEATURE ENGINEERING ENGINE
 # ============================================================
 @st.cache_data
-def process_data(file_buffer):
-    xls = pd.ExcelFile(file_buffer)
-    all_dfs = []
-    for sheet_name in xls.sheet_names:
-        df_sheet = pd.read_excel(xls, sheet_name=sheet_name)
-        if df_sheet.empty:
-            continue
-        df_sheet["Kelas"] = sheet_name.strip()
-        all_dfs.append(df_sheet)
+def process_data(file_buffer, is_demo=False):
+    if is_demo:
+        df_all = generate_sample_dataset()
+    else:
+        xls = pd.ExcelFile(file_buffer)
+        all_dfs = []
+        for sheet_name in xls.sheet_names:
+            df_sheet = pd.read_excel(xls, sheet_name=sheet_name)
+            if df_sheet.empty:
+                continue
+            df_sheet["Kelas"] = sheet_name.strip()
+            all_dfs.append(df_sheet)
 
-    if not all_dfs:
-        return pd.DataFrame()
-        
-    df_all = pd.concat(all_dfs, ignore_index=True)
-    df_all.columns = [str(c).strip() for c in df_all.columns]
+        if not all_dfs:
+            return pd.DataFrame()
+            
+        df_all = pd.concat(all_dfs, ignore_index=True)
+        df_all.columns = [str(c).strip() for c in df_all.columns]
 
     # Smart Column Alias Mapper
     col_rename_map = {}
@@ -229,11 +237,16 @@ def process_data(file_buffer):
     df_all = df_all.rename(columns=col_rename_map)
 
     # Clean & Coerce Required Columns
-    df_all["prediksi point"] = pd.to_numeric(df_all.get("prediksi point", 0), errors="coerce").fillna(0).astype(int)
-    df_all["point apps"] = pd.to_numeric(df_all.get("point apps", 0), errors="coerce").fillna(0).astype(int)
+    df_all["prediksi point"] = pd.to_numeric(df_all.get("prediksi point", 0), errors="coerce").fillna(0)
+    df_all["point apps"] = pd.to_numeric(df_all.get("point apps", 0), errors="coerce").fillna(0)
     
-    # Calculate Selisih as absolute positive gap
-    df_all["selisih"] = (df_all["prediksi point"] - df_all["point apps"]).abs().astype(int)
+    # Calculate Selisih if absent or invalid
+    if "selisih" not in df_all.columns or df_all["selisih"].isnull().all():
+        df_all["selisih"] = (df_all["prediksi point"] - df_all["point apps"]).abs()
+    else:
+        df_all["selisih"] = pd.to_numeric(df_all["selisih"], errors="coerce").fillna(
+            (df_all["prediksi point"] - df_all["point apps"]).abs()
+        )
 
     # Core Status Logic
     df_all["Status"] = df_all.apply(
@@ -247,11 +260,11 @@ def process_data(file_buffer):
             return "🟢 Sesuai"
         diff = row["selisih"]
         if diff <= 2:
-            return "🟡 Beda Tipis (1-2 Point)"
+            return "🟡 Low Variance (1-2 pts)"
         elif diff <= 5:
-            return "🟠 Beda Sedang (3-5 Point)"
+            return "🟠 Medium Variance (3-5 pts)"
         else:
-            return "🔴 Beda Banyak (>5 Point)"
+            return "🔴 High Priority Audit (>5 pts)"
 
     df_all["Severity Level"] = df_all.apply(classify_severity, axis=1)
 
@@ -306,58 +319,35 @@ def extract_unnested_sessions(df):
 # ============================================================
 # HEADER & SIDEBAR NAVIGATION
 # ============================================================
-st.markdown(f"""
-<div style="text-align: center; padding: 10px 0 20px 0;">
-<h1 style="font-size: 2.2rem; font-weight: 800; background: linear-gradient(90deg, #60a5fa, #3b82f6, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 6px;">
-📊 FYP B30 - Freshman Progress & Analytics
-</h1>
-<p style="color: #94a3b8; font-size: 1rem; font-weight: 500; margin-bottom: 24px;">
-Platform Analytics Point Logbook, Anomaly Detection & Progress Dashboard
-</p>
+st.title("📊 FYP B30 - Freshman Progress & Data Science Analytics")
 
-<div style="max-width: 850px; margin: 0 auto; padding: 20px 24px; background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9)); border: 1px solid rgba(59, 130, 246, 0.3); border-top: 4px solid #3b82f6; border-radius: 14px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
-<h4 style="color: #60a5fa; font-size: 1.1rem; margin-top: 0; margin-bottom: 8px; font-weight: 700;">📌 Petunjuk Monitoring & Crosscheck Logbook FYP</h4>
-<p style="margin-bottom: 6px; font-size: 0.93rem; color: #cbd5e1;">
-Status <b>"Belum Sesuai"</b> menandakan adanya selisih antara data <b>File Monitoring FL</b> dengan <b>Logbook Aplikasi</b> real-time.
-</p>
-<p style="margin-bottom: 14px; font-size: 0.88rem; color: #94a3b8;">
-FYPL & PIC dimohon melakukan audit silang dengan bukti fisik/digital pada Google Drive Logbook.
-</p>
-<a href="{GDRIVE_LOGBOOK_LINK}" target="_blank" style="display: inline-block; background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; padding: 8px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.9rem; box-shadow: 0 4px 14px rgba(59,130,246,0.35);">
-📁 Buka Google Drive Logbook All Drive
-</a>
-</div>
+# Custom Banner Callout
+st.markdown(f"""
+<div class="gdrive-callout">
+    <h4>📌 Petunjuk Monitoring & Crosscheck Logbook FYP</h4>
+    <p>Status <b>"Belum Sesuai"</b> menandakan adanya selisih antara data <b>File Monitoring FL</b> dengan data <b>Logbook Aplikasi</b> real-time.</p>
+    <p>FYPL & PIC dimohon melakukan audit silang dengan bukti fisik/digital pada Google Drive Logbook.</p>
+    <a href="{GDRIVE_LOGBOOK_LINK}" target="_blank" style="display: inline-block; background: #3b82f6; color: white; padding: 6px 16px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 0.9rem; margin-top: 6px;">
+        📁 Buka Google Drive Logbook All Drive
+    </a>
 </div>
 """, unsafe_allow_html=True)
 
 st.sidebar.header("🎛️ Data Source & Filters")
 
-uploaded_file = st.sidebar.file_uploader("Upload File Excel Monitoring", type=["xlsx", "xls"], key="sidebar_uploader")
+# File Upload vs Demo Mode
+data_mode = st.sidebar.radio("Pilih Sumber Data:", ["Upload Excel File", "⚡ Gunakan Sample Demo Data"])
 
-if uploaded_file is not None:
-    df_raw = process_data(uploaded_file)
-elif os.path.exists("logbook_mismatch_per_kelas.xlsx"):
-    df_raw = process_data("logbook_mismatch_per_kelas.xlsx")
+uploaded_file = None
+if data_mode == "Upload Excel File":
+    uploaded_file = st.sidebar.file_uploader("Upload File Excel Monitoring", type=["xlsx", "xls"])
+    if uploaded_file is None:
+        st.info("💡 **Tips:** Silakan upload file Excel di sidebar, atau pilih **'⚡ Gunakan Sample Demo Data'** untuk mencoba dashboard langsung!")
+        st.stop()
+    df_raw = process_data(uploaded_file, is_demo=False)
 else:
-    # Centered Hero Section for Upload
-    hero_col1, hero_col2, hero_col3 = st.columns([1, 2.8, 1])
-    with hero_col2:
-        st.markdown("""
-<div style="text-align: center; padding: 28px 24px; background: linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.9)); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 16px; margin-top: 10px; margin-bottom: 20px;">
-<h3 style="color: #60a5fa; margin-top: 0; font-weight: 700;">📥 Upload File Excel Monitoring FYP</h3>
-<p style="color: #cbd5e1; font-size: 0.95rem; margin-bottom: 16px;">
-Silakan upload file Excel terbaru kamu di bawah ini (format: <b>1 sheet = 1 kelas</b>) untuk mulai menganalisis data kepatuhan point logbook.
-</p>
-</div>
-""", unsafe_allow_html=True)
-
-        center_file = st.file_uploader("Drop file Excel di sini atau klik untuk memilih file", type=["xlsx", "xls"], key="center_uploader")
-        
-        if center_file is not None:
-            uploaded_file = center_file
-            df_raw = process_data(uploaded_file)
-        else:
-            st.stop()
+    df_raw = process_data(None, is_demo=True)
+    st.sidebar.success("✅ Menggunakan Sample Data Demo!")
 
 if df_raw.empty:
     st.error("Data kosong atau format sheet tidak sesuai!")
@@ -379,8 +369,8 @@ selected_kelas = st.sidebar.multiselect("Kelas", all_kelas, default=all_kelas)
 
 status_filter = st.sidebar.radio("Filter Status Point", ["Semua", "Belum Sesuai", "Sesuai"])
 
-severity_list = ["🟢 Sesuai", "🟡 Beda Tipis (1-2 Point)", "🟠 Beda Sedang (3-5 Point)", "🔴 Beda Banyak (>5 Point)"]
-selected_severity = st.sidebar.multiselect("Filter Tingkat Selisih Point", severity_list, default=severity_list)
+severity_list = ["🟢 Sesuai", "🟡 Low Variance (1-2 pts)", "🟠 Medium Variance (3-5 pts)", "🔴 High Priority Audit (>5 pts)"]
+selected_severity = st.sidebar.multiselect("Severity Discrepancy", severity_list, default=severity_list)
 
 # Filtering Engine
 df_filtered = df_raw[
@@ -403,12 +393,14 @@ if search_query:
 # ============================================================
 # MAIN DASHBOARD TABS
 # ============================================================
-tab_overview, tab_rootcause, tab_diagnostics, tab_details, tab_action = st.tabs([
-    "📊 Ringkasan",
-    "🌳 Peta Pemetaan",
-    "👤 Ranking FL & PIC",
-    "📋 Data Detail",
-    "💬 Pesan WA"
+tab_overview, tab_rootcause, tab_course, tab_scatter, tab_diagnostics, tab_details, tab_action = st.tabs([
+    "📊 Overview",
+    "🌳 Treemap",
+    "📚 Courses",
+    "📈 Scatter",
+    "👤 Diagnostics",
+    "📋 Details",
+    "💬 WA Report"
 ])
 
 # ------------------------------------------------------------
@@ -418,7 +410,7 @@ with tab_overview:
     total_fm = len(df_filtered)
     sesuai_count = len(df_filtered[df_filtered["Status"] == "Sesuai"])
     belum_count = len(df_filtered[df_filtered["Status"] == "Belum Sesuai"])
-    high_risk_count = len(df_filtered[df_filtered["Severity Level"] == "🔴 Beda Banyak (>5 Point)"])
+    high_risk_count = len(df_filtered[df_filtered["Severity Level"] == "🔴 High Priority Audit (>5 pts)"])
     
     compliance_rate = (sesuai_count / total_fm * 100) if total_fm > 0 else 0
     mismatch_rate = (belum_count / total_fm * 100) if total_fm > 0 else 0
@@ -428,18 +420,18 @@ with tab_overview:
     with kpi_col1:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-title">Total Freshman</div>
+            <div class="metric-title">Total Freshmen</div>
             <div class="metric-value">{total_fm:,}</div>
-            <div class="metric-subtitle">Mahasiswa Terfilter</div>
+            <div class="metric-subtitle">Filtered Students</div>
         </div>
         """, unsafe_allow_html=True)
 
     with kpi_col2:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-title">Persentase Sesuai</div>
+            <div class="metric-title">Compliance Rate</div>
             <div class="metric-value">{compliance_rate:.1f}%</div>
-            <div class="metric-subtitle">{sesuai_count} Student Sesuai</div>
+            <div class="metric-subtitle">{sesuai_count} Sesuai</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -448,16 +440,16 @@ with tab_overview:
         <div class="metric-card">
             <div class="metric-title">Belum Sesuai</div>
             <div class="metric-value" style="color: #f87171;">{belum_count:,}</div>
-            <div class="metric-subtitle negative">{mismatch_rate:.1f}% Perlu Cek</div>
+            <div class="metric-subtitle negative">{mismatch_rate:.1f}% Discrepancy</div>
         </div>
         """, unsafe_allow_html=True)
 
     with kpi_col4:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-title">Beda > 5 Point</div>
+            <div class="metric-title">High Risk Audit</div>
             <div class="metric-value" style="color: #ef4444;">{high_risk_count:,}</div>
-            <div class="metric-subtitle negative">Selisih Banyak</div>
+            <div class="metric-subtitle negative">Point Gap > 5</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -466,16 +458,16 @@ with tab_overview:
         active_classes = df_filtered["Kelas"].nunique()
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-title">Jumlah Kelas & PIC</div>
+            <div class="metric-title">Coverage</div>
             <div class="metric-value">{active_classes} <span style="font-size: 1rem; color: #888;">Kelas</span></div>
-            <div class="metric-subtitle">{active_pics} PIC Aktif</div>
+            <div class="metric-subtitle">{active_pics} Active PICs</div>
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Automated Data Insights Callout Box
-    st.subheader("💡 Ringkasan Penting Hari Ini")
+    st.subheader("💡 Automated Data Science Insights")
     if not df_filtered.empty:
         class_discrepancy = df_filtered.groupby("Kelas")["Status"].apply(lambda s: (s == "Belum Sesuai").sum()).sort_values(ascending=False)
         top_disc_class = class_discrepancy.index[0] if len(class_discrepancy) > 0 else "-"
@@ -493,13 +485,13 @@ with tab_overview:
         insight_col1, insight_col2 = st.columns(2)
         with insight_col1:
             st.info(f"""
-            📌 **Kelas Paling Banyak Belum Sesuai:** **{top_disc_class}** ({top_disc_class_count} freshman belum sesuai)  
-            🚨 **Freshmen Leader (FL) Perlu Cek Ulang:** **{top_fl_name}** (Kelas {top_fl_class} - {top_fl_count} freshman bermasalah)
+            📌 **Kelas Discrepancy Tertinggi:** **{top_disc_class}** ({top_disc_class_count} freshman belum sesuai)  
+            🚨 **FL Perlu Perhatian Khusus:** **{top_fl_name}** (Kelas {top_fl_class} - {top_fl_count} freshman bermasalah)
             """)
         with insight_col2:
             st.warning(f"""
             📚 **Top Sesi Incomplete Terbanyak:** **{top_sess_name}** ({top_sess_count} kejadian)  
-            ⚡ Terdapat **{high_risk_count}** freshman dengan **Selisih > 5 Point** yang membutuhkan pengecekan ulang logbook secepatnya.
+            ⚡ Terdapat **{high_risk_count}** freshman kategori **High Priority Audit** yang membutuhkan pengecekan ulang logbook secepatnya.
             """)
 
     st.divider()
@@ -507,7 +499,7 @@ with tab_overview:
     chart_col1, chart_col2 = st.columns([1, 1])
 
     with chart_col1:
-        st.subheader("🍩 Perbandingan Status Point")
+        st.subheader("🍩 Proporsi Compliance Status")
         status_counts = df_filtered["Status"].value_counts().reset_index()
         status_counts.columns = ["Status", "Jumlah"]
         
@@ -524,7 +516,7 @@ with tab_overview:
         st.plotly_chart(fig_donut, use_container_width=True)
 
     with chart_col2:
-        st.subheader("📊 Grafik Tingkat Selisih Point")
+        st.subheader("📊 Distribution by Discrepancy Severity")
         sev_counts = df_filtered["Severity Level"].value_counts().reset_index()
         sev_counts.columns = ["Severity", "Jumlah"]
         
@@ -536,9 +528,9 @@ with tab_overview:
             color="Severity",
             color_discrete_map={
                 "🟢 Sesuai": "#22c55e",
-                "🟡 Beda Tipis (1-2 Point)": "#eab308",
-                "🟠 Beda Sedang (3-5 Point)": "#f97316",
-                "🔴 Beda Banyak (>5 Point)": "#ef4444"
+                "🟡 Low Variance (1-2 pts)": "#eab308",
+                "🟠 Medium Variance (3-5 pts)": "#f97316",
+                "🔴 High Priority Audit (>5 pts)": "#ef4444"
             },
             text="Jumlah"
         )
@@ -570,65 +562,45 @@ with tab_overview:
 # TAB 2: ROOT-CAUSE HIERARCHICAL ANALYSIS
 # ------------------------------------------------------------
 with tab_rootcause:
-    st.subheader("🌳 Peta Pemetaan Freshman Belum Sesuai")
-    st.caption("Lihat daftar freshman yang belum sesuai point-nya, dikelompokkan berdasarkan PIC, Kelas, dan Freshmen Leader (FL).")
+    st.subheader("🌳 Hierarchical Root-Cause Analysis")
+    st.caption("Eksplorasi hirarki bertingkat untuk mengisolasi sumber selisih point dari PIC hingga ke mahasiswa.")
 
-    chart_type = st.radio("Pilih Mode Grafik:", ["🌳 Kotak Hirarki (Treemap)", "☀️ Lingkaran Bertingkat (Sunburst)"], horizontal=True)
+    chart_type = st.radio("Pilih Tampilan Visualisasi Hirarki:", ["🌳 Interactive Treemap", "☀️ Sunburst Chart"], horizontal=True)
 
     df_belum = df_filtered[df_filtered["Status"] == "Belum Sesuai"].copy()
     
     if not df_belum.empty:
         df_belum["Gap Sizing"] = df_belum["selisih"].apply(lambda v: max(1, v))
         
-        # Smart compact label formatting for real Excel data like logbook_mismatch_per_kelas.xlsx
+        # Build detailed label string with session info
         def make_leaf_label(r):
-            lbl = f"<b>{r['NAMA FRESHMEN']}</b><br>Selisih: -{r['selisih']} pt ({r['prediksi point']} ➔ {r['point apps']})"
+            lbl = f"<b>{r['NAMA FRESHMEN']}</b><br>💥 Selisih: -{r['selisih']} pt ({r['prediksi point']} ➔ {r['point apps']})"
             notes = []
-            
-            # Format Sesi 0
-            v0 = str(r.get('Sesi yang 0', '-')).strip()
-            if v0 not in ['-', 'nan', 'None', '']:
-                s_list = [s.strip() for s in v0.split(',') if s.strip()]
-                if len(s_list) == 1:
-                    notes.append(f"0: {s_list[0]}")
-                elif len(s_list) == 2:
-                    notes.append(f"0: {s_list[0]}, {s_list[1]}")
-                elif len(s_list) > 2:
-                    notes.append(f"0: {len(s_list)} Sesi ({s_list[0]}...)")
-                    
-            # Format Sesi Kosong
-            vk = str(r.get('Sesi yang Kosong', '-')).strip()
-            if vk not in ['-', 'nan', 'None', '']:
-                s_list = [s.strip() for s in vk.split(',') if s.strip()]
-                if len(s_list) == 1:
-                    notes.append(f"Kosong: {s_list[0]}")
-                elif len(s_list) == 2:
-                    notes.append(f"Kosong: {s_list[0]}, {s_list[1]}")
-                elif len(s_list) > 2:
-                    notes.append(f"Kosong: {len(s_list)} Sesi ({s_list[0]}...)")
-
+            if r['Sesi yang 0'] != "-":
+                notes.append(f"Nilai 0: {r['Sesi yang 0']}")
+            if r['Sesi yang Kosong'] != "-":
+                notes.append(f"Kosong: {r['Sesi yang Kosong']}")
             if notes:
                 lbl += f"<br>📚 " + " | ".join(notes)
             return lbl
 
         df_belum["Leaf Label"] = df_belum.apply(make_leaf_label, axis=1)
 
-        if chart_type == "🌳 Kotak Hirarki (Treemap)":
+        if chart_type == "🌳 Interactive Treemap":
             fig_hierarchy = px.treemap(
                 df_belum,
                 path=["PIC", "Kelas", "NAMA FRESHMEN LEADER", "Leaf Label"],
                 values="Gap Sizing",
                 color="Severity Level",
                 color_discrete_map={
-                    "🟡 Beda Tipis (1-2 Point)": "#eab308",
-                    "🟠 Beda Sedang (3-5 Point)": "#f97316",
-                    "🔴 Beda Banyak (>5 Point)": "#ef4444"
+                    "🟡 Low Variance (1-2 pts)": "#eab308",
+                    "🟠 Medium Variance (3-5 pts)": "#f97316",
+                    "🔴 High Priority Audit (>5 pts)": "#ef4444"
                 },
                 custom_data=["NAMA FRESHMEN", "prediksi point", "point apps", "selisih", "NIM FRESHMEN", "Sesi yang 0", "Sesi yang Kosong"]
             )
             fig_hierarchy.update_traces(
-                textfont=dict(size=14),
-                hovertemplate="<b>%{customdata[0]}</b> (NIM: %{customdata[4]})<br>Point Prediksi: %{customdata[1]} pt<br>Point Apps: %{customdata[2]} pt<br><b>Selisih Gap: -%{customdata[3]} pt</b><br>Sesi 0: %{customdata[5]}<br>Sesi Kosong: %{customdata[6]}<extra></extra>"
+                hovertemplate="<b>%{customdata[0]}</b> (NIM: %{customdata[4]})<br>Prediksi: %{customdata[1]} pt<br>Apps: %{customdata[2]} pt<br><b>Selisih: -%{customdata[3]} pt</b><br>Sesi 0: %{customdata[5]}<br>Sesi Kosong: %{customdata[6]}<extra></extra>"
             )
             fig_hierarchy.update_layout(margin=dict(t=30, l=10, r=10, b=10), height=620)
             st.plotly_chart(fig_hierarchy, use_container_width=True)
@@ -639,9 +611,9 @@ with tab_rootcause:
                 values="Gap Sizing",
                 color="Severity Level",
                 color_discrete_map={
-                    "🟡 Beda Tipis (1-2 Point)": "#eab308",
-                    "🟠 Beda Sedang (3-5 Point)": "#f97316",
-                    "🔴 Beda Banyak (>5 Point)": "#ef4444"
+                    "🟡 Low Variance (1-2 pts)": "#eab308",
+                    "🟠 Medium Variance (3-5 pts)": "#f97316",
+                    "🔴 High Priority Audit (>5 pts)": "#ef4444"
                 },
                 custom_data=["prediksi point", "point apps", "selisih"]
             )
@@ -664,7 +636,159 @@ with tab_rootcause:
 
 
 # ------------------------------------------------------------
-# TAB 3: PIC & FL DIAGNOSTICS
+# TAB 3: COURSE & SESSION DROP DIAGNOSTICS
+# ------------------------------------------------------------
+with tab_course:
+    st.subheader("📚 Course & Session Drop Diagnostics")
+    st.caption("Analisis mendalam untuk mengetahui topik/sesi perkuliahan mana yang paling banyak mengalami kendala logbook (Sesi Nilai 0 atau Sesi Kosong).")
+
+    df_sess = extract_unnested_sessions(df_filtered)
+
+    if not df_sess.empty:
+        # Session KPI Summary
+        top_sess_list = sorted(df_sess["Sesi"].unique())
+        
+        c_col1, c_col2 = st.columns([1, 2])
+        
+        with c_col1:
+            st.markdown("#### 🎯 Filter & Pilih Sesi Spresifik:")
+            selected_sess = st.selectbox("Pilih Sesi Logbook Bermasalah:", ["-- Tampilkan Semua Sesi --"] + top_sess_list)
+            
+            if selected_sess != "-- Tampilkan Semua Sesi --":
+                df_sess_sub = df_sess[df_sess["Sesi"] == selected_sess]
+                st.metric(f"Total Student Incomplete di {selected_sess}", len(df_sess_sub))
+                st.metric("Total Kelas Terdampak", df_sess_sub["Kelas"].nunique())
+            else:
+                st.metric("Total Frekuensi Kejadian Incomplete Sesi", len(df_sess))
+                st.metric("Total Topik Sesi Bermasalah", len(top_sess_list))
+
+        with c_col2:
+            st.markdown("#### 📊 Top Sesi Penyebab Discrepancy Point")
+            sess_rank = df_sess.groupby(["Sesi", "Tipe Kendala"]).size().reset_index(name="Jumlah Student")
+            fig_sess_rank = px.bar(
+                sess_rank,
+                x="Jumlah Student",
+                y="Sesi",
+                color="Tipe Kendala",
+                barmode="stack",
+                orientation="h",
+                color_discrete_map={"Sesi Kosong": "#ef4444", "Nilai 0": "#f97316"},
+                text="Jumlah Student"
+            )
+            fig_sess_rank.update_layout(height=340, margin=dict(t=20, b=20, l=20, r=20))
+            st.plotly_chart(fig_sess_rank, use_container_width=True)
+
+        st.divider()
+
+        st.subheader("🔥 Heatmap Matrix: Kelas vs Topik Sesi Bermasalah")
+        st.caption("Menunjukkan kelas mana saja yang belum melengkapi sesi tertentu.")
+        
+        pivot_sess_class = pd.crosstab(df_sess["Kelas"], df_sess["Sesi"])
+        fig_sess_heat = px.imshow(
+            pivot_sess_class,
+            labels=dict(x="Topik Sesi", y="Kelas", color="Jumlah Student"),
+            color_continuous_scale="Reds",
+            text_auto=True,
+            aspect="auto",
+            title="Matrix Persebaran Sesi Incomplete Per Kelas"
+        )
+        fig_sess_heat.update_layout(height=480)
+        st.plotly_chart(fig_sess_heat, use_container_width=True)
+
+        st.divider()
+
+        # Detailed Breakdown List by Selected Session
+        if selected_sess != "-- Tampilkan Semua Sesi --":
+            st.subheader(f"📋 Daftar Mahasiswa Lacking Point pada {selected_sess}")
+            df_sess_detail = df_sess[df_sess["Sesi"] == selected_sess][["Kelas", "PIC", "FL", "Freshman", "NIM", "Tipe Kendala", "selisih", "Severity"]]
+            st.dataframe(df_sess_detail.sort_values("Kelas"), use_container_width=True, hide_index=True)
+        else:
+            st.subheader("📋 Breakdown Seluruh Sesi per Mahasiswa")
+            st.dataframe(df_sess[["Sesi", "Tipe Kendala", "Kelas", "PIC", "FL", "Freshman", "NIM", "selisih"]].sort_values("Sesi"), use_container_width=True, hide_index=True)
+
+    else:
+        st.success("🎉 Tidak ada kendala sesi (Sesi 0 atau Sesi Kosong) ditemukan pada filter saat ini!")
+
+
+# ------------------------------------------------------------
+# TAB 4: COMPLIANCE SCATTER & MATRIX ANALYTICS
+# ------------------------------------------------------------
+with tab_scatter:
+    st.subheader("📈 Compliance Scatter Analytics (Garis Diagonal y = x)")
+    st.caption("Diagram sebar Data Science untuk mengevaluasi posisi kesesuaian point. Titik di bawah garis diagonal mewakili freshman dengan selisih point terutang.")
+
+    if not df_filtered.empty:
+        fig_scatter = px.scatter(
+            df_filtered,
+            x="prediksi point",
+            y="point apps",
+            color="Severity Level",
+            size="selisih",
+            size_max=22,
+            hover_name="NAMA FRESHMEN",
+            hover_data=["NIM FRESHMEN", "Kelas", "NAMA FRESHMEN LEADER", "PIC", "selisih"],
+            color_discrete_map={
+                "🟢 Sesuai": "#22c55e",
+                "🟡 Low Variance (1-2 pts)": "#eab308",
+                "🟠 Medium Variance (3-5 pts)": "#f97316",
+                "🔴 High Priority Audit (>5 pts)": "#ef4444"
+            },
+            title="Point Prediksi vs Point Apps (Titik di bawah garis = Terutang Point)"
+        )
+
+        max_val = max(int(df_filtered["prediksi point"].max()), int(df_filtered["point apps"].max()), 50)
+        fig_scatter.add_shape(
+            type="line",
+            x0=0, y0=0, x1=max_val, y1=max_val,
+            line=dict(color="#38bdf8", width=2, dash="dash")
+        )
+        fig_scatter.add_annotation(
+            x=max_val * 0.75, y=max_val * 0.75,
+            text="Garis Kepatuhan Sempurna (y = x)",
+            showarrow=False,
+            font=dict(color="#38bdf8", size=13)
+        )
+        fig_scatter.update_layout(height=520, margin=dict(t=40, b=20, l=20, r=20))
+        st.plotly_chart(fig_scatter, use_container_width=True)
+
+        st.divider()
+
+        matrix_col1, matrix_col2 = st.columns(2)
+
+        with matrix_col1:
+            st.subheader("🔥 Matrix Severity Concentration Per PIC")
+            heatmap_data = pd.crosstab(df_filtered["PIC"], df_filtered["Severity Level"])
+            fig_heat = px.imshow(
+                heatmap_data,
+                labels=dict(x="Severity Level", y="PIC", color="Jumlah Freshmen"),
+                color_continuous_scale="Reds",
+                text_auto=True,
+                aspect="auto",
+                title="Matrix Konsentrasi Discrepancy"
+            )
+            fig_heat.update_layout(height=420)
+            st.plotly_chart(fig_heat, use_container_width=True)
+
+        with matrix_col2:
+            st.subheader("📊 Distirbusi Statistik Selisih Point")
+            df_non_zero = df_filtered[df_filtered["selisih"] > 0]
+            if not df_non_zero.empty:
+                fig_box = px.box(
+                    df_non_zero,
+                    x="Kelas",
+                    y="selisih",
+                    color="Kelas",
+                    points="all",
+                    title="Sebaran Outlier Selisih Point Per Kelas"
+                )
+                fig_box.update_layout(height=420, showlegend=False, xaxis_tickangle=-45)
+                st.plotly_chart(fig_box, use_container_width=True)
+            else:
+                st.info("Semua selisih point = 0")
+
+
+# ------------------------------------------------------------
+# TAB 5: PIC & FL DIAGNOSTICS
 # ------------------------------------------------------------
 with tab_diagnostics:
     diag_col1, diag_col2 = st.columns([1, 1])
