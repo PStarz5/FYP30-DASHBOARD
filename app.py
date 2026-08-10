@@ -5,7 +5,10 @@ identifying discrepancy anomalies, diagnosing course/session drops, and generati
 """
 
 import io
+import os
 import random
+import glob
+from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -125,6 +128,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 GDRIVE_LOGBOOK_LINK = "https://drive.google.com/drive/folders/1hwEZYgQ_ZiW1GEQuFDDhQxUvwAS-XnrA?usp=sharing"
+ONE_DRIVE_MONITORING_PATH = r"C:\Users\mraff\OneDrive - Bina Nusantara\PartTimeSSO\CekLogbook\CalculateLogbook"
 
 # ============================================================
 # CLASS TO PIC MAPPING
@@ -339,15 +343,24 @@ st.markdown(f"""
 st.sidebar.header("🎛️ Data Source & Filters")
 
 # File Upload vs Demo Mode
-data_mode = st.sidebar.radio("Pilih Sumber Data:", ["Upload Excel File", "⚡ Gunakan Sample Demo Data"])
+data_mode = st.sidebar.radio("Pilih Sumber Data:", ["OneDrive Auto Load", "⚡ Gunakan Sample Demo Data"])
 
-uploaded_file = None
-if data_mode == "Upload Excel File":
-    uploaded_file = st.sidebar.file_uploader("Upload File Excel Monitoring", type=["xlsx", "xls"])
-    if uploaded_file is None:
-        st.info("💡 **Tips:** Silakan upload file Excel di sidebar, atau pilih **'⚡ Gunakan Sample Demo Data'** untuk mencoba dashboard langsung!")
+if data_mode == "OneDrive Auto Load":
+    if not os.path.exists(ONE_DRIVE_MONITORING_PATH):
+        st.sidebar.error("Path OneDrive tidak ditemukan. Pastikan path hardcoded sudah benar dan folder telah disinkronkan ke PC.")
         st.stop()
-    df_raw = process_data(uploaded_file, is_demo=False)
+
+    excel_files = []
+    for pattern in ["*.xlsx", "*.xls"]:
+        excel_files.extend(glob.glob(os.path.join(ONE_DRIVE_MONITORING_PATH, pattern)))
+
+    if not excel_files:
+        st.warning(f"Tidak ditemukan file Excel di {ONE_DRIVE_MONITORING_PATH}. Pastikan file sudah tersedia dan disinkronkan.")
+        st.stop()
+
+    latest_file = max(excel_files, key=os.path.getmtime)
+    st.sidebar.write(f"📄 Menggunakan file terbaru: **{os.path.basename(latest_file)}**")
+    df_raw = process_data(latest_file, is_demo=False)
 else:
     df_raw = process_data(None, is_demo=True)
     st.sidebar.success("✅ Menggunakan Sample Data Demo!")
