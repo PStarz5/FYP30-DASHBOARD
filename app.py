@@ -271,10 +271,18 @@ def process_data(file_buffer, is_demo=False):
     # PIC Mapping
     df_all["PIC"] = df_all["Kelas"].map(PIC_MAPPING).fillna("Belum ada PIC")
 
+    # Ensure session columns always exist (even if Excel lacks them)
+    for col_needed in ["Sesi yang 0", "Sesi yang Kosong"]:
+        if col_needed not in df_all.columns:
+            df_all[col_needed] = "-"
+
     # Clean text columns
     for text_col in ["Sesi yang 0", "Sesi yang Kosong", "NAMA FRESHMEN LEADER", "NAMA FRESHMEN"]:
         if text_col in df_all.columns:
             df_all[text_col] = df_all[text_col].astype(str).fillna("-").replace("nan", "-")
+
+    # Ensure selisih is always non-negative (required by Plotly scatter size)
+    df_all["selisih"] = df_all["selisih"].abs().clip(lower=0)
 
     return df_all
 
@@ -718,12 +726,16 @@ with tab_scatter:
     st.caption("Diagram sebar Data Science untuk mengevaluasi posisi kesesuaian point. Titik di bawah garis diagonal mewakili freshman dengan selisih point terutang.")
 
     if not df_filtered.empty:
+        # Ensure size values are non-negative for Plotly
+        df_scatter = df_filtered.copy()
+        df_scatter["selisih_size"] = df_scatter["selisih"].abs().clip(lower=0).replace(0, 1)
+
         fig_scatter = px.scatter(
-            df_filtered,
+            df_scatter,
             x="prediksi point",
             y="point apps",
             color="Severity Level",
-            size="selisih",
+            size="selisih_size",
             size_max=22,
             hover_name="NAMA FRESHMEN",
             hover_data=["NIM FRESHMEN", "Kelas", "NAMA FRESHMEN LEADER", "PIC", "selisih"],
