@@ -8,6 +8,7 @@ import io
 import os
 import random
 import glob
+import requests
 from pathlib import Path
 import pandas as pd
 import plotly.express as px
@@ -129,6 +130,7 @@ st.markdown("""
 
 GDRIVE_LOGBOOK_LINK = "https://drive.google.com/drive/folders/1hwEZYgQ_ZiW1GEQuFDDhQxUvwAS-XnrA?usp=sharing"
 ONE_DRIVE_MONITORING_PATH = r"C:\Users\mraff\OneDrive - Bina Nusantara\PartTimeSSO\CekLogbook\CalculateLogbook"
+SHAREPOINT_DOWNLOAD_URL = "https://binusianorg-my.sharepoint.com/personal/muhammad_bagaskara004_binus_ac_id/_layouts/15/guestaccess.aspx?share=IQC8YYS6GBY2QJBblcdbMwUfAZFRzT7QqYxbUX9RTgLH7XA&e=MJeVJb&download=1"
 
 # ============================================================
 # CLASS TO PIC MAPPING
@@ -346,21 +348,14 @@ st.sidebar.header("🎛️ Data Source & Filters")
 data_mode = st.sidebar.radio("Pilih Sumber Data:", ["OneDrive Auto Load", "⚡ Gunakan Sample Demo Data"])
 
 if data_mode == "OneDrive Auto Load":
-    if not os.path.exists(ONE_DRIVE_MONITORING_PATH):
-        st.sidebar.error("Path OneDrive tidak ditemukan. Pastikan path hardcoded sudah benar dan folder telah disinkronkan ke PC.")
+
+    try:
+        response = requests.get(SHAREPOINT_DOWNLOAD_URL, timeout=30)
+        response.raise_for_status()
+        df_raw = process_data(io.BytesIO(response.content), is_demo=False)
+    except Exception as e:
+        st.sidebar.error(f"Gagal mengunduh file dari SharePoint: {e}")
         st.stop()
-
-    excel_files = []
-    for pattern in ["*.xlsx", "*.xls"]:
-        excel_files.extend(glob.glob(os.path.join(ONE_DRIVE_MONITORING_PATH, pattern)))
-
-    if not excel_files:
-        st.warning(f"Tidak ditemukan file Excel di {ONE_DRIVE_MONITORING_PATH}. Pastikan file sudah tersedia dan disinkronkan.")
-        st.stop()
-
-    latest_file = max(excel_files, key=os.path.getmtime)
-    st.sidebar.write(f"📄 Menggunakan file terbaru: **{os.path.basename(latest_file)}**")
-    df_raw = process_data(latest_file, is_demo=False)
 else:
     df_raw = process_data(None, is_demo=True)
     st.sidebar.success("✅ Menggunakan Sample Data Demo!")
